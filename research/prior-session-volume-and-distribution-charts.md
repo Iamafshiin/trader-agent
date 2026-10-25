@@ -1,7 +1,7 @@
 # Prior-session profiles, time-at-price, and normal overlays
 
 **Wayfinder ticket:** [Research prior-session volume and distribution charts](https://github.com/Iamafshiin/trader-agent/issues/19)  
-**Workspace status:** This workspace has no usable Git metadata. `git rev-parse --show-toplevel` failed and the workspace root contains no `.git` entry. This report is therefore a local workspace file; no Git branch or GitHub file permalink could be created here.
+**Workspace status:** The main workspace has no Git metadata. A copy of this report is published on the [research/normal-distribution-profile-chart](https://github.com/Iamafshiin/trader-agent/tree/research/normal-distribution-profile-chart) branch.
 
 ## Findings
 
