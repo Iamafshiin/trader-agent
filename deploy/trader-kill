@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+DATA_DIR=/var/lib/trader-agent
+case "${1:-on}" in
+  on)
+    date -u +%FT%TZ > "$DATA_DIR/HALT"
+    chown trader:trader "$DATA_DIR/HALT"
+    systemctl stop trader-paper.service || true
+    echo "kill switch ENGAGED: halt flag set and trader-paper stopped"
+    ;;
+  off)
+    rm -f "$DATA_DIR/HALT"
+    echo "halt flag removed; start the service manually: systemctl start trader-paper"
+    ;;
+  *) echo "usage: trader-kill [on|off]" >&2; exit 2 ;;
+esac
