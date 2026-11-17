@@ -1,0 +1,13 @@
+[Unit]
+Description=trader-agent daily stream completeness report
+
+[Service]
+Type=oneshot
+User=trader
+WorkingDirectory=/opt/trader-agent
+EnvironmentFile=/etc/trader-agent/env
+ExecStart=/opt/trader-agent/.venv/bin/python -m trader_agent stream-report
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/trader-agent
+PrivateTmp=true
