@@ -7,6 +7,7 @@ dependencies = [
     "httpx>=0.28",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    "websockets>=13",
 ]
 
 [project.scripts]
@@ -32,6 +33,7 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
+ignore = ["SIM115"]
 
 [tool.mypy]
 python_version = "3.12"
