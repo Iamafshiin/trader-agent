@@ -28,6 +28,7 @@ if [ ! -x /home/$APP_USER/.local/bin/uv ]; then
   sudo -u "$APP_USER" -H bash -c 'curl -LsSf https://astral.sh/uv/install.sh | sh'
 fi
 
+git config --system --add safe.directory "$APP_DIR"
 if [ ! -d "$APP_DIR/.git" ]; then
   git clone --branch "$BRANCH" "$REPO_URL" "$APP_DIR"
 else
@@ -37,7 +38,9 @@ chown -R "$APP_USER:$APP_USER" "$APP_DIR"
 sudo -u "$APP_USER" -H bash -c "cd $APP_DIR && ~/.local/bin/uv sync --locked --no-dev"
 
 install -m 0644 "$APP_DIR"/deploy/systemd/*.service "$APP_DIR"/deploy/systemd/*.timer /etc/systemd/system/
+install -m 0755 "$APP_DIR"/deploy/trader-kill /usr/local/sbin/trader-kill
+install -m 0755 "$APP_DIR"/deploy/trader-cli /usr/local/bin/trader-cli
 systemctl daemon-reload
 systemctl enable --now trader-streams.service trader-candles.timer trader-report.timer
-sudo -u "$APP_USER" -H bash -c "cd $APP_DIR && set -a && . $ENV_DIR/env && set +a && ~/.local/bin/uv run python -m trader_agent check-config"
+trader-cli check-config
 systemctl --no-pager status trader-streams.service | head -5
