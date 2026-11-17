@@ -142,7 +142,9 @@ class StreamRecorder:
         seed: Callable[[str], Awaitable[dict[str, Any] | None]] | None = None,
         clock_ms: Callable[[], int] = lambda: int(time.time() * 1000),
         state_path: Path | None = None,
+        on_message: Callable[[str, Any, int], None] | None = None,
     ) -> None:
+        self._on_message = on_message
         self._connect = connect
         self._channels = channels
         self._writer = writer
@@ -198,6 +200,8 @@ class StreamRecorder:
             kind_of(channel),
             {"recv_ms": now, "channel": channel, "offset": offset, "data": pub.get("data")},
         )
+        if self._on_message is not None:
+            self._on_message(channel, pub.get("data"), now)
 
     async def _seed_book(self, channel: str, now: int) -> None:
         if self._seed is None or kind_of(channel) != "orderbook":
@@ -209,6 +213,8 @@ class StreamRecorder:
                 "orderbook",
                 {"recv_ms": now, "channel": channel, "offset": None, "seed": True, "data": data},
             )
+            if self._on_message is not None:
+                self._on_message(channel, data, now)
 
     def _persist(self, now: int) -> None:
         self._last_persist = now

@@ -1,11 +1,13 @@
 import argparse
 import asyncio
+import contextlib
 import json
 import signal
 import sys
 from collections.abc import Sequence
 from dataclasses import asdict
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import httpx
 import websockets
@@ -26,8 +28,13 @@ from trader_agent.market_data.streams import (
     completeness_report,
     make_seeder,
 )
-from trader_agent.settings import SettingsError, load_settings
+from trader_agent.ops.bale import find_chat_ids
+from trader_agent.paper.engine import PaperStore
+from trader_agent.paper.service import PaperService
+from trader_agent.risk.gate import RiskState
+from trader_agent.settings import Settings, SettingsError, load_settings
 from trader_agent.storage.candles import CandleStore
+from trader_agent.strategy.tcp_vp import load_params
 
 
 def _check_config(_: argparse.Namespace) -> int:
@@ -127,6 +134,120 @@ def _stream_report(args: argparse.Namespace) -> int:
     return 0 if reports else 1
 
 
+def _settings_or_exit() -> Settings | None:
+    try:
+        return load_settings()
+    except SettingsError as exc:
+        print(exc, file=sys.stderr)
+        return None
+
+
+def _run_paper(args: argparse.Namespace) -> int:
+    settings = _settings_or_exit()
+    if settings is None:
+        return 2
+    service = PaperService(settings, load_params(), args.run_id)
+
+    async def run() -> None:
+        task = asyncio.current_task()
+        if task is not None and sys.platform != "win32":
+            asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
+        with contextlib.suppress(asyncio.CancelledError):
+            await service.run()
+
+    try:
+        asyncio.run(run())
+    except KeyboardInterrupt:
+        return 0
+    return 0
+
+
+def _paper_status(args: argparse.Namespace) -> int:
+    settings = _settings_or_exit()
+    if settings is None:
+        return 2
+    db = settings.data_path("db") / "paper.sqlite3"
+    store = PaperStore(db)
+    run = store.conn.execute(
+        "SELECT version, config_hash, started_ms FROM runs WHERE run_id=?", (args.run_id,)
+    ).fetchone()
+    if run is None:
+        print(f"no run '{args.run_id}'")
+        return 1
+    account = store.load_account(args.run_id)
+    last_eq = store.conn.execute(
+        "SELECT at_ms, equity FROM equity WHERE run_id=? ORDER BY at_ms DESC LIMIT 1",
+        (args.run_id,),
+    ).fetchone()
+    trades = store.conn.execute(
+        "SELECT COUNT(*) FROM trades WHERE run_id=?", (args.run_id,)
+    ).fetchone()[0]
+    risk = RiskState(db, args.run_id)
+    started = datetime.fromtimestamp(run[2] / 1000, UTC).isoformat(timespec="minutes")
+    print(f"run: {args.run_id} ({run[0]}, config {run[1][:12]}, started {started})")
+    if last_eq:
+        print(f"equity: {Decimal(last_eq[1]):,.0f} rial")
+    if account:
+        print(f"cash: {account.cash:,.0f} rial")
+        for asset, qty in account.holdings.items():
+            if qty:
+                print(f"holding {asset}: {qty}")
+        for sym, stop in account.stops.items():
+            print(f"stop {sym}: {stop.amount} @ {stop.stop_price}")
+    print(f"trades: {trades}")
+    print(f"risk halt: {risk.halt_reason or 'none'}")
+    print(f"kill switch: {'ENGAGED' if (settings.trader_data_dir / 'HALT').exists() else 'off'}")
+    return 0
+
+
+def _halt(args: argparse.Namespace) -> int:
+    settings = _settings_or_exit()
+    if settings is None:
+        return 2
+    flag = settings.trader_data_dir / "HALT"
+    if args.off:
+        flag.unlink(missing_ok=True)
+        print("kill switch off")
+    else:
+        flag.parent.mkdir(parents=True, exist_ok=True)
+        flag.write_text(datetime.now(UTC).isoformat(), encoding="utf-8")
+        print("kill switch ENGAGED")
+    return 0
+
+
+def _reset_risk_halt(args: argparse.Namespace) -> int:
+    settings = _settings_or_exit()
+    if settings is None:
+        return 2
+    state = RiskState(settings.data_path("db") / "paper.sqlite3", args.run_id)
+    print(f"clearing risk halt: {state.halt_reason or 'none'}")
+    state.halt_reason = None
+    state.save()
+    return 0
+
+
+def _bale_chat_id(_: argparse.Namespace) -> int:
+    settings = _settings_or_exit()
+    if settings is None:
+        return 2
+    if settings.bale_bot_token is None:
+        print("BALE_BOT_TOKEN is not set", file=sys.stderr)
+        return 2
+    token = settings.bale_bot_token.get_secret_value()
+
+    async def run() -> list[dict[str, object]]:
+        async with httpx.AsyncClient(timeout=20) as client:
+            return await find_chat_ids(token, client)
+
+    chats = asyncio.run(run())
+    if not chats:
+        print("no messages yet: send any message to your bot in Bale, then retry")
+        return 1
+    for chat in chats:
+        print(f"chat_id={chat['id']} type={chat['type']} name={chat['name']}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trader-agent",
@@ -146,6 +267,20 @@ def build_parser() -> argparse.ArgumentParser:
     report = sub.add_parser("stream-report", help="daily completeness report (UTC day)")
     report.add_argument("--day", help="YYYY-MM-DD, default yesterday")
     report.set_defaults(handler=_stream_report)
+    paper = sub.add_parser("run-paper", help="run the rule-baseline paper loop with live data")
+    paper.add_argument("--run-id", default="shakedown")
+    paper.set_defaults(handler=_run_paper)
+    status = sub.add_parser("paper-status", help="show a paper run's account and halts")
+    status.add_argument("--run-id", default="shakedown")
+    status.set_defaults(handler=_paper_status)
+    halt = sub.add_parser("halt", help="engage the kill switch (blocks all orders)")
+    halt.add_argument("--off", action="store_true", help="release the kill switch")
+    halt.set_defaults(handler=_halt)
+    reset = sub.add_parser("reset-risk-halt", help="manually clear a risk halt")
+    reset.add_argument("--run-id", default="shakedown")
+    reset.set_defaults(handler=_reset_risk_halt)
+    bale = sub.add_parser("bale-chat-id", help="list chat ids that messaged the Bale bot")
+    bale.set_defaults(handler=_bale_chat_id)
     return parser
 
 

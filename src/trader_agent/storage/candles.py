@@ -1,4 +1,5 @@
 import sqlite3
+from decimal import Decimal
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -70,6 +71,20 @@ class CandleStore:
         first = start + (-(start + TEHRAN_UTC_OFFSET)) % step
         expected = set(range(first, end, step))
         return len(expected - set(self.open_times(symbol, resolution, start, end)))
+
+    def load(self, symbol: str, resolution: str, limit: int) -> "list[Candle]":
+        from trader_agent.market_data.candles import Candle
+
+        cur = self._conn.execute(
+            "SELECT open_time, open, high, low, close, volume FROM candles "
+            "WHERE symbol=? AND resolution=? ORDER BY open_time DESC LIMIT ?",
+            (symbol, resolution, limit),
+        )
+        rows = cur.fetchall()[::-1]
+        return [
+            Candle(symbol, resolution, t, *(Decimal(x) for x in (o, h, lo, c, v)))
+            for t, o, h, lo, c, v in rows
+        ]
 
     def count(self, symbol: str, resolution: str) -> int:
         cur = self._conn.execute(

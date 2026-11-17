@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     nobitex_user_agent: str = "TraderBot/trader-agent-0.1"
     nobitex_api_key: SecretStr | None = None
     nobitex_secret_key: SecretStr | None = None
+    bale_bot_token: SecretStr | None = None
+    bale_chat_id: str | None = None
 
     @field_validator("trader_data_dir")
     @classmethod
@@ -49,6 +51,7 @@ class Settings(BaseSettings):
             "data_dir": str(self.trader_data_dir),
             "nobitex_base_url": self.nobitex_base_url,
             "nobitex_credentials": "set" if self.nobitex_api_key else "absent",
+            "bale_alerts": "set" if self.bale_bot_token and self.bale_chat_id else "absent",
         }
 
 
