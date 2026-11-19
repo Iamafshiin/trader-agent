@@ -34,8 +34,8 @@ class Settings(BaseSettings):
     @field_validator("llm_base_url")
     @classmethod
     def _https_llm_url(cls, value: str | None) -> str | None:
-        if value and not value.startswith("https://"):
-            raise ValueError("LLM_BASE_URL must use https")
+        if value and not value.startswith(("https://", "http://127.0.0.1:", "http://localhost:")):
+            raise ValueError("LLM_BASE_URL must use https or a loopback address")
         return value.rstrip("/") if value else None
 
     @field_validator("trader_data_dir")

@@ -234,6 +234,17 @@ def test_openai_compatible_model_raises_model_error(response: httpx.Response) ->
         model.complete([{"role": "user", "content": "hi"}])
 
 
-def test_openai_compatible_model_requires_https() -> None:
+@pytest.mark.parametrize("url", ["http://llm.example", "http://127.0.0.1.evil.example"])
+def test_openai_compatible_model_requires_https_off_loopback(url: str) -> None:
     with pytest.raises(ValueError):
-        OpenAICompatibleModel("http://llm.example", "k", "m")
+        OpenAICompatibleModel(url, "k", "m")
+
+
+def test_openai_compatible_model_allows_loopback_http_without_proxy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.example:3128")
+    monkeypatch.setenv("ALL_PROXY", "http://proxy.example:3128")
+    model = OpenAICompatibleModel("http://127.0.0.1:8080/v1", "k", "m")
+    assert model._client._trust_env is False
+    model.close()

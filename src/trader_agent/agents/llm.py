@@ -2,6 +2,8 @@ from typing import Any, Protocol
 
 import httpx
 
+LOOPBACK = ("http://127.0.0.1:", "http://localhost:")
+
 
 class ModelError(RuntimeError):
     pass
@@ -22,14 +24,15 @@ class OpenAICompatibleModel:
         timeout_s: float = 120,
         transport: httpx.BaseTransport | None = None,
     ) -> None:
-        if not base_url.startswith("https://"):
-            raise ValueError("LLM base URL must use https")
+        if not base_url.startswith(("https://", *LOOPBACK)):
+            raise ValueError("LLM base URL must use https or a loopback address")
         self.name = model
         self._client = httpx.Client(
             base_url=base_url.rstrip("/"),
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=timeout_s,
             transport=transport,
+            trust_env=not base_url.startswith(LOOPBACK),
         )
 
     def complete(self, messages: list[dict[str, str]]) -> str:
