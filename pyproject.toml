@@ -4,9 +4,11 @@ version = "0.1.0"
 description = "Autonomous crypto spot trading on Nobitex, paper mode first"
 requires-python = ">=3.12,<3.13"
 dependencies = [
+    "fastapi>=0.165.0",
     "httpx>=0.28",
     "pydantic>=2.9",
     "pydantic-settings>=2.6",
+    "uvicorn>=0.54.0",
     "websockets>=13",
 ]
 
