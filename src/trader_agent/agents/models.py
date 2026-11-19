@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from decimal import Decimal
 from typing import Literal
 
@@ -5,7 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from trader_agent.strategy.tcp_vp import EntrySignal, ExitSignal
 
-PROMPT_VERSION = "b7-2"
+PROMPT_VERSION = "b7-3"
 
 
 class Frozen(BaseModel):
@@ -34,6 +35,7 @@ class ProposalContext(Frozen):
     rule_stop: Decimal | None = None
     profile_24h: ProfileView | None = None
     trend_1d_up: bool | None = None
+    recent_closes_15m: tuple[Decimal, ...] = ()
     position: PositionView
 
 
@@ -64,6 +66,7 @@ def context_for(
     position: PositionView,
     profile_24h: dict[str, Decimal] | None = None,
     trend_1d_up: bool | None = None,
+    recent_closes: Sequence[Decimal] = (),
 ) -> ProposalContext:
     profile = (
         None
@@ -81,6 +84,7 @@ def context_for(
             rule_stop=signal.stop,
             profile_24h=profile,
             trend_1d_up=trend_1d_up,
+            recent_closes_15m=tuple(recent_closes),
             position=position,
         )
     return ProposalContext(
@@ -91,6 +95,7 @@ def context_for(
         rule_reason=signal.reason,
         profile_24h=profile,
         trend_1d_up=trend_1d_up,
+        recent_closes_15m=tuple(recent_closes),
         position=position,
     )
 

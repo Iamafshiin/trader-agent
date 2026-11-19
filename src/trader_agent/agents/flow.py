@@ -48,6 +48,7 @@ GLOSSARY = (
     "in place whether or not you exit now.\n"
     "- close is the last closed 15m candle close in IRT. profile_24h (POC, VAH, VAL) and "
     "trend_1d_up may be null when unavailable; null is not a reason to object by itself.\n"
+    "- recent_closes_15m lists the last closed 15m candle closes, oldest first.\n"
     '- action "take" means: carry out this signal now (entry: buy; exit: sell). '
     'action "pass" means: do nothing this candle. "take" never means take-profit.\n'
     "- Position size, fees, and risk limits are handled by separate code; do not judge them.\n"
@@ -59,7 +60,9 @@ def proposal_prompt(context: ProposalContext) -> str:
         f"Prompt version {PROMPT_VERSION}.\n{GLOSSARY}\n"
         "Rule signal and market context (JSON):\n"
         f"{context.model_dump_json()}\n\n"
-        "Decide whether to take or pass on this signal.\n"
+        "The rules fired mechanically. Check the recent closes, the 24h profile, the daily "
+        "trend, and the stop distance for evidence that supports or contradicts acting now, "
+        "then decide whether to take or pass on this signal.\n"
         "Reply with one JSON object only, with keys: "
         '"symbol" (copy from context), "signal" (copy from context), '
         '"action" ("take" or "pass"), "confidence" (0 to 1), "rationale" (short text).'
