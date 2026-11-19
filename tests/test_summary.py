@@ -45,6 +45,20 @@ def snap(**over: Any) -> Snapshot:
     return Snapshot(**base)
 
 
+def lagged(minutes: int) -> dict[str, int]:
+    close = NOW // 1000 - minutes * 60
+    return {s: close - 900 for s in ("BTCIRT", "ETHIRT", "USDTIRT")}
+
+
+def test_hourly_candle_fetch_lag_is_not_a_problem() -> None:
+    assert build_report(snap(last_15m=lagged(75)), {}).problems == []
+
+
+def test_candles_older_than_one_missed_fetch_are_flagged() -> None:
+    problems = build_report(snap(last_15m=lagged(95)), {}).problems
+    assert len([p for p in problems if "کندل‌ها عقب افتاده‌اند" in p]) == 3
+
+
 def test_persian_digits() -> None:
     assert fa("2026-11-19 12:30") == "۲۰۲۶-۱۱-۱۹ ۱۲:۳۰"
 

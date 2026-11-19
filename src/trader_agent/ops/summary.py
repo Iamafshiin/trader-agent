@@ -17,7 +17,7 @@ SERVICES = {
 TEHRAN = timedelta(hours=3, minutes=30)
 FA_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
 BOOK_STALE_S = 300
-CANDLE_STALE_S = 1800
+CANDLE_STALE_S = 5400
 DISK_WARN = 0.80
 BURNIN_DAYS = 7
 
