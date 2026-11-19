@@ -21,6 +21,7 @@ from trader_agent.market_data.streams import (
     make_seeder,
 )
 from trader_agent.ops.bale import Alerter
+from trader_agent.ops.commands import CommandHandler, CommandPoller, HttpBaleClient
 from trader_agent.paper.engine import MarketInput, PaperEngine, PaperStore
 from trader_agent.paper.exchange import Book
 from trader_agent.risk.gate import RiskGate, RiskState
@@ -190,6 +191,17 @@ class PaperService:
                 token.get_secret_value() if token else None, self.settings.bale_chat_id, bale_client
             )
             sender = asyncio.create_task(alerter.run())
+            poller = None
+            if token and self.settings.bale_chat_id:
+                poller = asyncio.create_task(
+                    CommandPoller(
+                        HttpBaleClient(token.get_secret_value(), bale_client),
+                        self.settings.bale_chat_id,
+                        CommandHandler(
+                            self.root, self.run_id, self.settings.data_path("db") / "paper.sqlite3"
+                        ),
+                    ).run()
+                )
             rules = await self.fetch_rules(client)
             errors = await asyncio.to_thread(self.backfill, {"15": 8, "60": 12, "D": 80})
             now_ms = int(time.time() * 1000)
@@ -224,8 +236,10 @@ class PaperService:
                 await asyncio.gather(recorder.run_forever(), self.scheduler(alerter))
             finally:
                 writer.close()
-                sender.cancel()
-                await asyncio.gather(sender, return_exceptions=True)
+                tasks = [t for t in (sender, poller) if t is not None]
+                for t in tasks:
+                    t.cancel()
+                await asyncio.gather(*tasks, return_exceptions=True)
                 await alerter.send_now(f"[paper] run '{self.run_id}' stopped")
 
 
