@@ -193,6 +193,37 @@ class PaperEngine:
             self.store.add_decision(self.run_id, now_ms, symbol, record)
         self.store.save_account(self.run_id, self.exchange.account)
 
+    def flatten(self, now_ms: int) -> list[tuple[str, str, str]]:
+        results: list[tuple[str, str, str]] = []
+        for symbol in self.params.symbols:
+            if not self.in_position(symbol):
+                continue
+            book = self.books.get(symbol)
+            rules = self.rules.get(symbol)
+            if book is None or book.bid is None or rules is None:
+                results.append((symbol, "skipped", "no bid"))
+                continue
+            amount = rules.floor_amount(self.exchange.account.holdings[asset_of(symbol)])
+            order = Order(
+                self.exchange.next_id("sell"), symbol, Side.SELL, Kind.LIMIT, amount, price=book.bid
+            )
+            try:
+                view = self._view()
+            except LookupError as exc:
+                results.append((symbol, "skipped", str(exc)))
+                continue
+            decision = self.gate.check(order, view, book.bid, self.params.taker_fee, True, True)
+            if not decision.allowed:
+                results.append((symbol, "blocked", decision.reason))
+                continue
+            self.exchange.cancel_stop(symbol)
+            fill = self.exchange.market_sell_at_touch(order, book, now_ms)
+            self.store.add_trade(self.run_id, fill, "operator flatten")
+            self.alert(f"[paper] FLATTEN {symbol} sold {amount} @ {fill.price:.0f}")
+            results.append((symbol, "sold", f"{amount} @ {fill.price:.0f}"))
+        self.store.save_account(self.run_id, self.exchange.account)
+        return results
+
     def _enter(
         self, sig: EntrySignal, inp: MarketInput, rules: MarketRules | None, now_ms: int
     ) -> str:

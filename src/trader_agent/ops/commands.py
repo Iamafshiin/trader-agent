@@ -1,5 +1,6 @@
 import asyncio
 import time
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Protocol
@@ -9,7 +10,12 @@ import httpx
 from trader_agent.ops.bale import BALE_API
 from trader_agent.ops.summary import _paper, fa, fa_num
 
-HELP = "دستورها:\n/status — وضعیت\n/pause — توقف معاملات\n/resume — ادامه معاملات"
+Flatten = Callable[[int], list[tuple[str, str, str]]]
+
+HELP = (
+    "دستورها:\n/status — وضعیت\n/pause — توقف معاملات\n/resume — ادامه معاملات\n"
+    "/flatten confirm — فروش همه پوزیشن‌ها"
+)
 UNKNOWN = "دستور ناشناخته است.\n" + HELP
 
 
@@ -47,20 +53,40 @@ class HttpBaleClient:
 
 
 class CommandHandler:
-    def __init__(self, root: Path, run_id: str, db: Path) -> None:
+    def __init__(self, root: Path, run_id: str, db: Path, flatten: Flatten | None = None) -> None:
         self.flag = root / "HALT"
         self.run_id = run_id
         self.db = db
+        self._flatten = flatten
 
     def handle(self, text: str) -> str:
-        command = text.strip().split()[0].split("@")[0].lower() if text.strip() else ""
+        parts = text.strip().split()
+        command = parts[0].split("@")[0].lower() if parts else ""
         if command == "/status":
             return self.status()
         if command == "/pause":
             return self.pause()
         if command == "/resume":
             return self.resume()
+        if command == "/flatten":
+            return self.flatten(len(parts) > 1 and parts[1].lower() == "confirm")
         return UNKNOWN
+
+    def flatten(self, confirmed: bool) -> str:
+        if not confirmed:
+            return "⚠️ این دستور همه پوزیشن‌های باز را می‌فروشد. برای اجرا بفرست: /flatten confirm"
+        if self._flatten is None:
+            return "❌ موتور معاملات هنوز آماده نیست."
+        results = self._flatten(int(time.time() * 1000))
+        if not results:
+            return "ℹ️ پوزیشن بازی وجود ندارد."
+        labels = {"sold": "✅ فروخته شد", "blocked": "⛔ مسدود", "skipped": "⚠️ انجام نشد"}
+        lines = ["📉 نتیجه فروش همه پوزیشن‌ها"]
+        for symbol, status, detail in results:
+            lines.append(f"• {symbol}: {labels[status]} ({fa(detail)})")
+        if any(status == "blocked" for _, status, _ in results):
+            lines.append("مسدود شدن یعنی RiskGate اجازه نداده است (مثلاً کلید توقف فعال است).")
+        return "\n".join(lines)
 
     def pause(self) -> str:
         if self.flag.exists():

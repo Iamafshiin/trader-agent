@@ -166,6 +166,37 @@ def test_engine_enters_sets_stop_and_stop_fills(tmp_path: Path) -> None:
     assert [r[0] for r in trades] == ["entry", "protective stop"]
 
 
+def enter_position(eng: PaperEngine) -> None:
+    c = entry_candles()
+    eng.on_candle_close(DAY0, btc_inputs(c[:-1], 1_300_000, 1_300_010))
+    eng.on_candle_close(DAY0 + 900_000, btc_inputs(c, 1_300_000, 1_300_010))
+    assert eng.in_position("BTCIRT")
+
+
+def test_flatten_sells_through_gate_and_cancels_stop(tmp_path: Path) -> None:
+    alerts: list[str] = []
+    eng = make_engine(tmp_path, alerts)
+    enter_position(eng)
+    results = eng.flatten(DAY0 + 1_000_000)
+    assert [(s, st) for s, st, _ in results] == [("BTCIRT", "sold")]
+    assert not eng.in_position("BTCIRT")
+    assert "BTCIRT" not in eng.exchange.account.stops
+    trades = eng.store.conn.execute("SELECT reason FROM trades ORDER BY at_ms").fetchall()
+    assert [r[0] for r in trades] == ["entry", "operator flatten"]
+    assert any("FLATTEN BTCIRT" in a for a in alerts)
+    assert eng.flatten(DAY0 + 1_100_000) == []
+
+
+def test_flatten_respects_kill_switch(tmp_path: Path) -> None:
+    eng = make_engine(tmp_path, [])
+    enter_position(eng)
+    (tmp_path / "HALT").touch()
+    results = eng.flatten(DAY0 + 1_000_000)
+    assert [(s, st) for s, st, _ in results] == [("BTCIRT", "blocked")]
+    assert eng.in_position("BTCIRT")
+    assert "BTCIRT" in eng.exchange.account.stops
+
+
 def test_engine_state_survives_restart(tmp_path: Path) -> None:
     eng = make_engine(tmp_path, [])
     c = entry_candles()
