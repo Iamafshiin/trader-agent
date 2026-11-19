@@ -5,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from trader_agent.strategy.tcp_vp import EntrySignal, ExitSignal
 
-PROMPT_VERSION = "b7-1"
+PROMPT_VERSION = "b7-2"
 
 
 class Frozen(BaseModel):

@@ -38,11 +38,28 @@ CRITIC = {
 }
 
 
+GLOSSARY = (
+    "How to read the data:\n"
+    '- signal "entry": the rules want to BUY and open a new long position. '
+    "position.held is false, which is expected. rule_stop is the protective stop price "
+    "that will be placed below entry; atr is the 15m average true range.\n"
+    '- signal "exit": the rules want to SELL the whole bot-managed position. '
+    "position.entry_price and position.stop describe that position; the stop stays "
+    "in place whether or not you exit now.\n"
+    "- close is the last closed 15m candle close in IRT. profile_24h (POC, VAH, VAL) and "
+    "trend_1d_up may be null when unavailable; null is not a reason to object by itself.\n"
+    '- action "take" means: carry out this signal now (entry: buy; exit: sell). '
+    'action "pass" means: do nothing this candle. "take" never means take-profit.\n'
+    "- Position size, fees, and risk limits are handled by separate code; do not judge them.\n"
+)
+
+
 def proposal_prompt(context: ProposalContext) -> str:
     return (
-        f"Prompt version {PROMPT_VERSION}.\n"
+        f"Prompt version {PROMPT_VERSION}.\n{GLOSSARY}\n"
         "Rule signal and market context (JSON):\n"
         f"{context.model_dump_json()}\n\n"
+        "Decide whether to take or pass on this signal.\n"
         "Reply with one JSON object only, with keys: "
         '"symbol" (copy from context), "signal" (copy from context), '
         '"action" ("take" or "pass"), "confidence" (0 to 1), "rationale" (short text).'
@@ -51,11 +68,13 @@ def proposal_prompt(context: ProposalContext) -> str:
 
 def critic_prompt(context: ProposalContext, proposal: Proposal) -> str:
     return (
-        f"Prompt version {PROMPT_VERSION}.\n"
+        f"Prompt version {PROMPT_VERSION}.\n{GLOSSARY}\n"
         "Rule signal and market context (JSON):\n"
         f"{context.model_dump_json()}\n\n"
         "Proposal to review (JSON):\n"
         f"{proposal.model_dump_json()}\n\n"
+        'Answer "approve" if the data supports the proposed action, "reject" if the data '
+        'contradicts it, "abstain" only if the data is too thin to judge either way.\n'
         "Reply with one JSON object only, with keys: "
         '"verdict" ("approve", "reject", or "abstain") and "reason" (short text).'
     )
