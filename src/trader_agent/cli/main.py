@@ -249,6 +249,15 @@ def _bale_chat_id(_: argparse.Namespace) -> int:
     return 0
 
 
+def _dashboard(args: argparse.Namespace) -> int:
+    from trader_agent.dashboard.app import serve
+
+    if _settings_or_exit() is None:
+        return 2
+    serve(args.port)
+    return 0
+
+
 def _hourly_summary(args: argparse.Namespace) -> int:
     settings = _settings_or_exit()
     if settings is None:
@@ -315,6 +324,9 @@ def build_parser() -> argparse.ArgumentParser:
     summary = sub.add_parser("hourly-summary", help="send the Persian status summary to Bale")
     summary.add_argument("--dry-run", action="store_true", help="print only, do not send")
     summary.set_defaults(handler=_hourly_summary)
+    dash = sub.add_parser("dashboard", help="serve the read-only web dashboard on 127.0.0.1")
+    dash.add_argument("--port", type=int, default=8765)
+    dash.set_defaults(handler=_dashboard)
     return parser
 
 
