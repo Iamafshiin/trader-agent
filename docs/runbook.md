@@ -30,6 +30,7 @@ This installs `uv`, the `trader` user, `/var/lib/trader-agent` (data), `/etc/tra
 | `trader-candles.timer` | Hourly candle backfill (15m, 1h, 1d) |
 | `trader-report.timer` | Daily completeness report at 00:10 UTC |
 | `trader-paper.service` | Paper loop; installed but not enabled. Stops `trader-streams` when started |
+| `trader-dashboard.service` | Read-only web dashboard on 127.0.0.1:8765; installed but not enabled |
 
 Add Bale settings to `/etc/trader-agent/env`, then `systemctl restart` the running unit.
 
@@ -48,6 +49,21 @@ systemctl start trader-paper
 systemctl enable trader-paper
 trader-cli paper-status --run-id study
 ```
+
+## Dashboard (read-only)
+
+```
+systemctl enable --now trader-dashboard
+```
+
+It binds to 127.0.0.1 only and never writes to the data directory. From your PC:
+
+```
+ssh -N -L 8765:127.0.0.1:8765 <user>@<vps-host>
+```
+
+Then open http://127.0.0.1:8765. Locally: `uv run python -m trader_agent dashboard`.
+The page loads `lightweight-charts` from unpkg, so the browser needs internet access.
 
 ## Emergency controls
 

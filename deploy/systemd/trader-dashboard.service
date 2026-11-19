@@ -1,0 +1,20 @@
+[Unit]
+Description=trader-agent read-only web dashboard (127.0.0.1 only)
+After=network.target
+
+[Service]
+User=trader
+WorkingDirectory=/opt/trader-agent
+EnvironmentFile=/etc/trader-agent/env
+ExecStart=/opt/trader-agent/.venv/bin/python -m trader_agent dashboard --port 8765
+Restart=on-failure
+RestartSec=10
+MemoryMax=150M
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/trader-agent
+PrivateTmp=true
+RestrictAddressFamilies=AF_INET AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
