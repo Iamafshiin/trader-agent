@@ -28,7 +28,8 @@ from trader_agent.market_data.streams import (
     completeness_report,
     make_seeder,
 )
-from trader_agent.ops.bale import find_chat_ids
+from trader_agent.ops.bale import Alerter, find_chat_ids
+from trader_agent.ops.summary import build_report, gather, load_state, save_state
 from trader_agent.paper.engine import PaperStore
 from trader_agent.paper.service import PaperService
 from trader_agent.risk.gate import RiskState
@@ -248,6 +249,36 @@ def _bale_chat_id(_: argparse.Namespace) -> int:
     return 0
 
 
+def _hourly_summary(args: argparse.Namespace) -> int:
+    settings = _settings_or_exit()
+    if settings is None:
+        return 2
+    root = settings.trader_data_dir
+    state_path = root / "state" / "summary.json"
+    prev = load_state(state_path)
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    start = settings.burnin_start
+    start_ms = int(start.timestamp() * 1000) if start is not None else None
+    report = build_report(gather(root, now_ms, prev, start_ms), prev)
+    print(report.text)
+    if args.dry_run:
+        return 0
+    token = settings.bale_bot_token
+
+    async def send() -> bool:
+        async with httpx.AsyncClient(timeout=20) as client:
+            alerter = Alerter(
+                token.get_secret_value() if token else None, settings.bale_chat_id, client
+            )
+            return await alerter.send_now(report.text)
+
+    if not asyncio.run(send()):
+        print("bale delivery failed", file=sys.stderr)
+        return 1
+    save_state(state_path, report.state)
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="trader-agent",
@@ -281,6 +312,9 @@ def build_parser() -> argparse.ArgumentParser:
     reset.set_defaults(handler=_reset_risk_halt)
     bale = sub.add_parser("bale-chat-id", help="list chat ids that messaged the Bale bot")
     bale.set_defaults(handler=_bale_chat_id)
+    summary = sub.add_parser("hourly-summary", help="send the Persian status summary to Bale")
+    summary.add_argument("--dry-run", action="store_true", help="print only, do not send")
+    summary.set_defaults(handler=_hourly_summary)
     return parser
 
 

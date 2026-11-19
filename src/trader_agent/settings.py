@@ -1,3 +1,4 @@
+from datetime import datetime
 from pathlib import Path
 from typing import Literal
 
@@ -25,6 +26,7 @@ class Settings(BaseSettings):
     nobitex_secret_key: SecretStr | None = None
     bale_bot_token: SecretStr | None = None
     bale_chat_id: str | None = None
+    burnin_start: datetime | None = None
 
     @field_validator("trader_data_dir")
     @classmethod
