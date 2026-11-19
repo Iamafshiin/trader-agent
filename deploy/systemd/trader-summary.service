@@ -1,0 +1,15 @@
+[Unit]
+Description=trader-agent hourly Persian status summary to Bale
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=trader
+WorkingDirectory=/opt/trader-agent
+EnvironmentFile=/etc/trader-agent/env
+ExecStart=/opt/trader-agent/.venv/bin/python -m trader_agent hourly-summary
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/trader-agent
+PrivateTmp=true

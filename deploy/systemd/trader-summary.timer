@@ -1,0 +1,9 @@
+[Unit]
+Description=Hourly trader-agent status summary
+
+[Timer]
+OnCalendar=*-*-* *:00:30 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

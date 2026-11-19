@@ -47,6 +47,6 @@ install -m 0644 "$APP_DIR"/deploy/systemd/*.service "$APP_DIR"/deploy/systemd/*.
 install -m 0755 "$APP_DIR"/deploy/trader-kill /usr/local/sbin/trader-kill
 install -m 0755 "$APP_DIR"/deploy/trader-cli /usr/local/bin/trader-cli
 systemctl daemon-reload
-systemctl enable --now trader-streams.service trader-candles.timer trader-report.timer
+systemctl enable --now trader-streams.service trader-candles.timer trader-report.timer trader-summary.timer
 trader-cli check-config
 systemctl --no-pager status trader-streams.service | head -5
