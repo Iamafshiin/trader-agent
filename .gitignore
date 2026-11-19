@@ -18,3 +18,4 @@ reports/
 .dsh-acl-recovery/
 *.stackdump
 pytest-of-*/
+.crewai/
