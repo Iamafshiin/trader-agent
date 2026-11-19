@@ -116,7 +116,9 @@ def build_report(snap: Snapshot, prev: dict[str, Any]) -> Report:
         else:
             close_ms = (candle + 900) * 1000
             age_ok = snap.now_ms - close_ms <= CANDLE_STALE_S * 1000
-            parts.append(f"آخرین کندل {tehran_clock(candle * 1000)[11:]} {'✅' if age_ok else '⚠️'}")
+            parts.append(
+                f"آخرین کندل {fa(tehran_clock(candle * 1000)[11:])} {'✅' if age_ok else '⚠️'}"
+            )
             if not age_ok:
                 problems.append(f"{sym}: کندل‌ها عقب افتاده‌اند")
         data_lines.append(f"• {sym}: " + "، ".join(parts))
