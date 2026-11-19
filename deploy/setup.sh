@@ -22,7 +22,7 @@ fi
 timedatectl set-ntp true
 
 id "$APP_USER" >/dev/null 2>&1 || useradd --system --create-home --home-dir /home/$APP_USER --shell /usr/sbin/nologin "$APP_USER"
-install -d -o "$APP_USER" -g "$APP_USER" -m 0750 "$DATA_DIR"
+install -d -o "$APP_USER" -g "$APP_USER" -m 0750 "$DATA_DIR" "$DATA_DIR/home"
 install -d -o root -g "$APP_USER" -m 0750 "$ENV_DIR"
 
 if [ ! -f "$ENV_DIR/env" ]; then

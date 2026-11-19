@@ -8,6 +8,7 @@ Conflicts=trader-streams.service
 User=trader
 WorkingDirectory=/opt/trader-agent
 EnvironmentFile=/etc/trader-agent/env
+Environment=HOME=/var/lib/trader-agent/home
 ExecStart=/opt/trader-agent/.venv/bin/python -m trader_agent run-paper --run-id study
 Restart=always
 RestartSec=10

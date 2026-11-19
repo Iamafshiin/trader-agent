@@ -27,6 +27,16 @@ class Settings(BaseSettings):
     bale_bot_token: SecretStr | None = None
     bale_chat_id: str | None = None
     burnin_start: datetime | None = None
+    llm_base_url: str | None = None
+    llm_api_key: SecretStr | None = None
+    llm_model: str | None = None
+
+    @field_validator("llm_base_url")
+    @classmethod
+    def _https_llm_url(cls, value: str | None) -> str | None:
+        if value and not value.startswith("https://"):
+            raise ValueError("LLM_BASE_URL must use https")
+        return value.rstrip("/") if value else None
 
     @field_validator("trader_data_dir")
     @classmethod
@@ -54,7 +64,11 @@ class Settings(BaseSettings):
             "nobitex_base_url": self.nobitex_base_url,
             "nobitex_credentials": "set" if self.nobitex_api_key else "absent",
             "bale_alerts": "set" if self.bale_bot_token and self.bale_chat_id else "absent",
+            "llm": self.llm_model if self.llm_model and self.llm_ready() else "absent",
         }
+
+    def llm_ready(self) -> bool:
+        return bool(self.llm_base_url and self.llm_api_key and self.llm_model)
 
 
 def load_settings(**overrides: object) -> Settings:
