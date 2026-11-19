@@ -158,6 +158,11 @@ class PaperService:
             out[s] = MarketInput(c15, c60, book, all(checks.values()), context)
         return out
 
+    def flatten(self, now_ms: int) -> list[tuple[str, str, str]]:
+        if self.engine is None:
+            return [("-", "skipped", "engine not ready")]
+        return self.engine.flatten(now_ms)
+
     async def fetch_rules(self, client: httpx.AsyncClient) -> dict[str, MarketRules]:
         r = await client.get("/v2/options")
         r.raise_for_status()
@@ -198,7 +203,10 @@ class PaperService:
                         HttpBaleClient(token.get_secret_value(), bale_client),
                         self.settings.bale_chat_id,
                         CommandHandler(
-                            self.root, self.run_id, self.settings.data_path("db") / "paper.sqlite3"
+                            self.root,
+                            self.run_id,
+                            self.settings.data_path("db") / "paper.sqlite3",
+                            self.flatten,
                         ),
                     ).run()
                 )

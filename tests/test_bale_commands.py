@@ -117,3 +117,39 @@ def test_resume_never_clears_risk_halt(tmp_path: Path) -> None:
     assert not flag.exists()
     assert "همچنان فعال" in fake.sent[-1][1]
     assert RiskState(tmp_path / "db" / "paper.sqlite3", "t").halt_reason == "max drawdown limit hit"
+
+
+def test_flatten_requires_confirmation_then_runs(tmp_path: Path) -> None:
+    calls: list[int] = []
+
+    def flatten(now_ms: int) -> list[tuple[str, str, str]]:
+        calls.append(now_ms)
+        return [("BTCIRT", "sold", "0.001 @ 1300000")]
+
+    fake = FakeBale()
+    handler = CommandHandler(tmp_path, "t", tmp_path / "p.sqlite3", flatten)
+    poller = CommandPoller(fake, CHAT, handler)
+    poll(poller)
+    fake.say(1, CHAT, "/flatten")
+    poll(poller)
+    assert calls == []
+    assert "/flatten confirm" in fake.sent[-1][1]
+    fake.say(2, CHAT, "/flatten confirm")
+    poll(poller)
+    assert len(calls) == 1
+    assert "BTCIRT" in fake.sent[-1][1]
+    assert "۱۳۰۰۰۰۰" in fake.sent[-1][1]
+
+
+def test_flatten_from_other_chat_is_ignored(tmp_path: Path) -> None:
+    calls: list[int] = []
+    fake = FakeBale()
+    handler = CommandHandler(
+        tmp_path, "t", tmp_path / "p.sqlite3", lambda ms: calls.append(ms) or []
+    )
+    poller = CommandPoller(fake, CHAT, handler)
+    poll(poller)
+    fake.say(1, "999", "/flatten confirm")
+    poll(poller)
+    assert calls == []
+    assert fake.sent == []
