@@ -6,9 +6,10 @@ from dataclasses import asdict, dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from trader_agent.market_data.bars import STEP, aggregate, bucket_open
 from trader_agent.market_data.candles import Candle
-from trader_agent.storage.candles import TEHRAN_UTC_OFFSET
 from trader_agent.strategy.tcp_vp import (
+    DEFAULT_VERSION,
     EntrySignal,
     ExitSignal,
     Params,
@@ -18,8 +19,6 @@ from trader_agent.strategy.tcp_vp import (
 )
 
 WINDOW = 300
-STEP = {"15": 900, "60": 3600, "240": 14400}
-SLOW_OF = {"15": "60", "60": "240"}
 
 
 @dataclass(frozen=True)
@@ -38,55 +37,9 @@ class LabeledSignal:
     win: int
 
 
-def bucket_open(t: int, step: int) -> int:
-    return t - (t + TEHRAN_UTC_OFFSET) % step
-
-
-def hour_open(t: int) -> int:
-    return bucket_open(t, STEP["60"])
-
-
-def aggregate(bars: Sequence[Candle], step: int) -> list[tuple[int, Candle]]:
-    out: list[tuple[int, Candle]] = []
-    group: list[Candle] = []
-    for c in bars:
-        if group and bucket_open(c.open_time, step) != bucket_open(group[0].open_time, step):
-            out.append(merge(group, step))
-            group = []
-        group.append(c)
-    if group:
-        out.append(merge(group, step))
-    return out
-
-
-def to_hourly(c15: Sequence[Candle]) -> list[tuple[int, Candle]]:
-    return aggregate(c15, STEP["60"])
-
-
-def merge(group: Sequence[Candle], step: int) -> tuple[int, Candle]:
-    start = bucket_open(group[0].open_time, step)
-    candle = Candle(
-        group[0].symbol,
-        str(step // 60),
-        start,
-        group[0].open,
-        max(c.high for c in group),
-        min(c.low for c in group),
-        group[-1].close,
-        sum((c.volume for c in group), Decimal(0)),
-    )
-    return start + step, candle
-
-
-def replay(
-    params: Params,
-    symbol: str,
-    bars: Sequence[Candle],
-    resolution: str = "15",
-    slow_exit_only: bool = False,
-) -> Iterator[LabeledSignal]:
-    step = STEP[resolution]
-    slow_step = STEP[SLOW_OF[resolution]]
+def replay(params: Params, symbol: str, bars: Sequence[Candle]) -> Iterator[LabeledSignal]:
+    step = STEP[params.signal_resolution]
+    slow_step = STEP[params.trend_resolution]
     slow = aggregate(bars, slow_step)
     s_closed = 0
     state = PullbackState()
@@ -146,8 +99,6 @@ def replay(
         if isinstance(sig, EntrySignal):
             pending_entry = sig
         elif isinstance(sig, ExitSignal):
-            if slow_exit_only and not sig.reason.startswith("1h"):
-                continue
             pending_exit = sig
 
 
@@ -168,21 +119,29 @@ def load_candles(db: Path, market: str, resolution: str) -> list[Candle]:
     ]
 
 
+def signal_bars(db: Path, market: str, source: str, params: Params) -> list[Candle]:
+    bars = load_candles(db, market, source)
+    if source == params.signal_resolution:
+        return bars
+    return [c for _, c in aggregate(bars, STEP[params.signal_resolution])]
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="trader-agent-signals")
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--markets", nargs="+", default=["BTCTMN", "ETHTMN", "USDTTMN"])
-    parser.add_argument("--resolution", choices=sorted(SLOW_OF), default="15")
+    parser.add_argument("--source-resolution", choices=["15", "60"], default="15")
+    parser.add_argument("--version", default=DEFAULT_VERSION)
     args = parser.parse_args(argv)
-    params = load_params()
+    params = load_params(version=args.version)
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w", newline="", encoding="utf-8") as f:
         writer: csv.DictWriter[str] | None = None
         for market in args.markets:
-            candles = load_candles(args.db, market, args.resolution)
+            candles = signal_bars(args.db, market, args.source_resolution, params)
             count = 0
-            for row in replay(params, candles[0].symbol, candles, args.resolution):
+            for row in replay(params, candles[0].symbol, candles):
                 if writer is None:
                     writer = csv.DictWriter(f, fieldnames=list(asdict(row)))
                     writer.writeheader()

@@ -12,7 +12,7 @@ from trader_agent.strategy.tcp_vp import load_params
 
 D = Decimal
 DAY0 = 1_794_873_600_000
-PARAMS = load_params()
+PARAMS = load_params(version="tcp-vp-1")
 RULES = {
     s: MarketRules(s, D(a), D(10), D(500000))
     for s, a in [("BTCIRT", "0.000001"), ("ETHIRT", "0.00001"), ("USDTIRT", "0.01")]
@@ -180,7 +180,7 @@ def test_engine_state_survives_restart(tmp_path: Path) -> None:
 def test_engine_rejects_changed_config_for_same_run(tmp_path: Path) -> None:
     make_engine(tmp_path, [])
     store = PaperStore(tmp_path / "paper.sqlite3")
-    other = load_params()
+    other = load_params(version="tcp-vp-1")
     object.__setattr__(other, "config_hash", "x" * 64)
     with pytest.raises(RuntimeError):
         store.ensure_run("study", other, "rule-baseline", DAY0)

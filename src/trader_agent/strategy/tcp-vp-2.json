@@ -1,0 +1,28 @@
+{
+  "version": "tcp-vp-2",
+  "symbols": ["BTCIRT", "ETHIRT", "USDTIRT"],
+  "signal_resolution": "60",
+  "trend_resolution": "240",
+  "exit_on_signal_trend": false,
+  "ema_fast": 20,
+  "ema_slow": 50,
+  "warmup_candles": 250,
+  "atr_period": 14,
+  "stop_atr_mult": "2",
+  "position_fraction": "0.01",
+  "max_deployed_fraction": "0.03",
+  "starting_balance_rls": "1000000000",
+  "value_area_share": "0.70",
+  "profile_row_fraction": "0.001",
+  "maker_fee": "0.0025",
+  "taker_fee": "0.0025",
+  "slippage_normal": "0.0005",
+  "slippage_stop": "0.0020",
+  "signal_expiry_s": 300,
+  "freshness": {
+    "orderbook_s": null,
+    "trades_s": null,
+    "candle_grace_s": 60
+  },
+  "agents": null
+}

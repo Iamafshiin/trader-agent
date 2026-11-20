@@ -1,4 +1,6 @@
+import json
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 
@@ -14,7 +16,7 @@ from trader_agent.strategy.tcp_vp import (
 from trader_agent.strategy.volume_profile import build_profile
 
 D = Decimal
-PARAMS = load_params()
+PARAMS = load_params(version="tcp-vp-1")
 STEP = D(10)
 
 
@@ -48,7 +50,7 @@ def test_params_are_versioned_and_hashed() -> None:
     assert (PARAMS.ema_fast, PARAMS.ema_slow, PARAMS.warmup_candles) == (20, 50, 250)
     assert PARAMS.stop_atr_mult == D("0.25")
     assert len(PARAMS.config_hash) == 64
-    assert load_params().config_hash == PARAMS.config_hash
+    assert load_params(version="tcp-vp-1").config_hash == PARAMS.config_hash
 
 
 def test_volume_profile_value_area() -> None:
@@ -124,3 +126,34 @@ def test_exit_when_either_trend_turns_down(c15_step: float, c60_step: float, rea
 
 def test_holds_position_while_both_trends_up() -> None:
     assert run(rising(300), rising(300, res="60"), PullbackState(), pos=True) is None
+
+
+V2 = load_params()
+
+
+def test_v2_is_default_and_hourly_with_four_hour_trend() -> None:
+    assert V2.version == "tcp-vp-2"
+    assert (V2.signal_resolution, V2.trend_resolution) == ("60", "240")
+    assert V2.exit_on_signal_trend is False
+    assert V2.stop_atr_mult == D(2)
+    assert V2.config_hash != PARAMS.config_hash
+    assert (PARAMS.signal_resolution, PARAMS.trend_resolution) == ("15", "60")
+    assert PARAMS.exit_on_signal_trend is True
+
+
+def test_v2_ignores_signal_trend_and_exits_on_four_hour_trend() -> None:
+    falling = rising(300, start=2000, step=-1, res="60")
+    up_4h = rising(300, res="240")
+    down_4h = rising(300, start=2000, step=-1, res="240")
+    assert evaluate(V2, "BTCIRT", falling, up_4h, True, PullbackState(), True, STEP) is None
+    sig = evaluate(V2, "BTCIRT", rising(300, res="60"), down_4h, True, PullbackState(), True, STEP)
+    assert isinstance(sig, ExitSignal)
+    assert sig.reason == "4h trend turned down"
+
+
+def test_rejects_trend_not_slower_than_signal(tmp_path: Path) -> None:
+    raw = {**V2.raw, "trend_resolution": "60"}
+    path = tmp_path / "bad.json"
+    path.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ValueError):
+        load_params(path)

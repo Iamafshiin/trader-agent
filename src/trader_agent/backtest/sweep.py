@@ -8,12 +8,12 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from pathlib import Path
 
-from trader_agent.backtest.signals import STEP, aggregate, load_candles, replay
-from trader_agent.market_data.candles import Candle
-from trader_agent.strategy.tcp_vp import load_params
+from trader_agent.backtest.signals import replay, signal_bars
+from trader_agent.strategy.tcp_vp import Params, load_params
 
 HOLDOUT_START = 1735677000
 RESOLUTIONS = ("15", "60")
+SLOW_OF = {"15": "60", "60": "240"}
 STOP_MULTS = ("0.25", "1", "2")
 SLOW_EXIT_ONLY = (False, True)
 WALLEX = ("BTCTMN", "ETHTMN", "USDTTMN")
@@ -48,30 +48,30 @@ def stats(returns: list[float]) -> dict[str, float]:
     return {"n": n, "win": sum(r > 0 for r in returns) / n, "mean": mean, "t": t}
 
 
-def wallex_bars(db: Path, market: str, resolution: str) -> list[Candle]:
-    c15 = load_candles(db, market, "15")
-    if resolution == "15":
-        return c15
-    return [c for _, c in aggregate(c15, STEP[resolution])]
+def params_for(config: Config) -> Params:
+    return replace(
+        load_params(version="tcp-vp-1"),
+        stop_atr_mult=Decimal(config.stop_mult),
+        signal_resolution=config.resolution,
+        trend_resolution=SLOW_OF[config.resolution],
+        exit_on_signal_trend=not config.slow_exit_only,
+    )
 
 
 def run(config: Config, wallex: Path, nobitex: Path | None) -> dict[str, object]:
-    params = replace(load_params(), stop_atr_mult=Decimal(config.stop_mult))
+    params = params_for(config)
     train: list[float] = []
     hold: list[float] = []
     for market in WALLEX:
-        bars = wallex_bars(wallex, market, config.resolution)
-        for row in replay(params, bars[0].symbol, bars, config.resolution, config.slow_exit_only):
+        bars = signal_bars(wallex, market, "15", params)
+        for row in replay(params, bars[0].symbol, bars):
             target = hold if row.signal_time >= HOLDOUT_START else train
             target.append(float(row.net_return))
     nob: list[float] = []
     if nobitex is not None and config.resolution == "60":
         for market in NOBITEX:
-            bars = load_candles(nobitex, market, "60")
-            nob += [
-                float(row.net_return)
-                for row in replay(params, market, bars, "60", config.slow_exit_only)
-            ]
+            bars = signal_bars(nobitex, market, "60", params)
+            nob += [float(row.net_return) for row in replay(params, market, bars)]
     out: dict[str, object] = {"config": config.name}
     for label, values in (("train", train), ("holdout", hold), ("nobitex", nob)):
         for key, value in stats(values).items():
