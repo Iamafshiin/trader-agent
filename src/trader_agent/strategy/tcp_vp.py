@@ -7,6 +7,8 @@ from importlib import resources
 from pathlib import Path
 from typing import Any
 
+from trader_agent.market_data.bars import LABEL as RESOLUTION_LABEL
+from trader_agent.market_data.bars import STEP as RESOLUTION_SECONDS
 from trader_agent.market_data.candles import Candle
 from trader_agent.strategy.indicators import atr, ema
 
@@ -30,6 +32,9 @@ class Params:
     slippage_normal: Decimal
     slippage_stop: Decimal
     signal_expiry_s: int
+    signal_resolution: str
+    trend_resolution: str
+    exit_on_signal_trend: bool
     config_hash: str
     raw: dict[str, Any]
 
@@ -48,9 +53,13 @@ DECIMAL_FIELDS = (
 )
 
 
-def load_params(path: Path | None = None) -> Params:
+DEFAULT_VERSION = "tcp-vp-2"
+
+
+def load_params(path: Path | None = None, version: str = DEFAULT_VERSION) -> Params:
     if path is None:
-        text = resources.files("trader_agent.strategy").joinpath("tcp-vp-1.json").read_text("utf-8")
+        bundled = resources.files("trader_agent.strategy").joinpath(f"{version}.json")
+        text = bundled.read_text("utf-8")
     else:
         text = path.read_text(encoding="utf-8")
     raw = json.loads(text)
@@ -63,11 +72,19 @@ def load_params(path: Path | None = None) -> Params:
         "warmup_candles": int(raw["warmup_candles"]),
         "atr_period": int(raw["atr_period"]),
         "signal_expiry_s": int(raw["signal_expiry_s"]),
+        "signal_resolution": str(raw.get("signal_resolution", "15")),
+        "trend_resolution": str(raw.get("trend_resolution", "60")),
+        "exit_on_signal_trend": bool(raw.get("exit_on_signal_trend", True)),
     }
     for name in DECIMAL_FIELDS:
         values[name] = Decimal(str(raw[name]))
     if values["ema_fast"] >= values["ema_slow"]:
         raise ValueError("ema_fast must be below ema_slow")
+    sig_res, trend_res = values["signal_resolution"], values["trend_resolution"]
+    if sig_res not in RESOLUTION_SECONDS or trend_res not in RESOLUTION_SECONDS:
+        raise ValueError("unknown signal or trend resolution")
+    if RESOLUTION_SECONDS[sig_res] >= RESOLUTION_SECONDS[trend_res]:
+        raise ValueError("trend_resolution must be slower than signal_resolution")
     return Params(
         **values,
         config_hash=hashlib.sha256(canonical.encode()).hexdigest(),
@@ -130,8 +147,8 @@ def trend(candles: Sequence[Candle], fast: int, slow: int) -> Trend | None:
 def evaluate(
     params: Params,
     symbol: str,
-    c15: Sequence[Candle],
-    c60: Sequence[Candle],
+    signal_bars: Sequence[Candle],
+    trend_bars: Sequence[Candle],
     in_position: bool,
     state: PullbackState,
     data_ok: bool,
@@ -140,35 +157,37 @@ def evaluate(
     if not data_ok:
         state.reset()
         return None
-    if len(c15) < params.warmup_candles or len(c60) < params.warmup_candles:
+    if len(signal_bars) < params.warmup_candles or len(trend_bars) < params.warmup_candles:
         return None
-    t15 = trend(c15, params.ema_fast, params.ema_slow)
-    t60 = trend(c60, params.ema_fast, params.ema_slow)
-    if t15 is None or t60 is None:
+    ts = trend(signal_bars, params.ema_fast, params.ema_slow)
+    tt = trend(trend_bars, params.ema_fast, params.ema_slow)
+    if ts is None or tt is None:
         return None
-    last = c15[-1]
+    last = signal_bars[-1]
     if in_position:
         state.reset()
-        if t15.down:
-            return ExitSignal(symbol, last.open_time, "15m trend turned down")
-        if t60.down:
-            return ExitSignal(symbol, last.open_time, "1h trend turned down")
+        if params.exit_on_signal_trend and ts.down:
+            label = RESOLUTION_LABEL[params.signal_resolution]
+            return ExitSignal(symbol, last.open_time, f"{label} trend turned down")
+        if tt.down:
+            label = RESOLUTION_LABEL[params.trend_resolution]
+            return ExitSignal(symbol, last.open_time, f"{label} trend turned down")
         return None
-    if not (t15.up and t60.up):
+    if not (ts.up and tt.up):
         state.reset()
         return None
-    if last.close < t15.fast:
+    if last.close < ts.fast:
         state.low = last.low if state.low is None else min(state.low, last.low)
         if state.since is None:
             state.since = last.open_time
         return None
-    if state.low is not None and state.since is not None and last.close > t15.fast:
+    if state.low is not None and state.since is not None and last.close > ts.fast:
         low = min(state.low, last.low)
         state.reset()
         a = atr(
-            [c.high for c in c15],
-            [c.low for c in c15],
-            [c.close for c in c15],
+            [c.high for c in signal_bars],
+            [c.low for c in signal_bars],
+            [c.close for c in signal_bars],
             params.atr_period,
         )
         if a is None:

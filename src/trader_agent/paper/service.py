@@ -9,7 +9,8 @@ import httpx
 import websockets
 
 from trader_agent.exchange.models import MarketRules
-from trader_agent.market_data.candles import CandleCollector, CandleSourceError, RawLog
+from trader_agent.market_data.bars import LABEL, STEP, bucket_open, closed_bars
+from trader_agent.market_data.candles import Candle, CandleCollector, CandleSourceError, RawLog
 from trader_agent.market_data.streams import (
     WS_URL,
     FreshnessBounds,
@@ -26,12 +27,14 @@ from trader_agent.paper.engine import MarketInput, PaperEngine, PaperStore
 from trader_agent.paper.exchange import Book
 from trader_agent.risk.gate import RiskGate, RiskState
 from trader_agent.settings import Settings
-from trader_agent.storage.candles import TEHRAN_UTC_OFFSET, CandleStore
+from trader_agent.storage.candles import CandleStore
 from trader_agent.strategy.tcp_vp import Params, trend
 from trader_agent.strategy.volume_profile import build_profile
 
 DAY_MS = 86_400_000
 WINDOW_MS = 900_000
+WINDOW = 300
+STORED = ("15", "60")
 
 
 def parse_rules(options: dict[str, Any], symbols: tuple[str, ...]) -> dict[str, MarketRules]:
@@ -56,9 +59,20 @@ def best_prices(data: dict[str, Any]) -> tuple[Decimal | None, Decimal | None]:
 
 
 def latest_closed_hour_open(now_ms: int) -> int:
-    now = now_ms // 1000
-    boundary = (now + TEHRAN_UTC_OFFSET) // 3600 * 3600 - TEHRAN_UTC_OFFSET
-    return boundary - 3600
+    return last_closed_open(now_ms // 1000, 3600)
+
+
+def last_closed_open(now_s: int, step: int) -> int:
+    return bucket_open(now_s, step) - step
+
+
+def warmup_days(params: Params) -> float:
+    step = STEP[params.trend_resolution]
+    return max(12.0, (WINDOW + 2) * step / 86400)
+
+
+def is_signal_boundary(now_s: int, params: Params) -> bool:
+    return bucket_open(now_s, STEP[params.signal_resolution]) == bucket_open(now_s, 900)
 
 
 class PaperService:
@@ -112,18 +126,28 @@ class PaperService:
         store.close()
         return errors
 
+    def bars(self, symbol: str, resolution: str, now_s: int) -> list[Candle]:
+        if resolution in STORED:
+            return self.candles.load(symbol, resolution, WINDOW)
+        step = STEP[resolution]
+        hourly = self.candles.load(symbol, "60", WINDOW * step // 3600 + step // 3600)
+        return closed_bars(hourly, step, now_s)[-WINDOW:]
+
     def inputs(self, now_ms: int) -> dict[str, MarketInput]:
-        boundary = now_ms // 1000 // 900 * 900
+        now_s = now_ms // 1000
+        sig_res, trend_res = self.params.signal_resolution, self.params.trend_resolution
+        sig_label, trend_label = LABEL[sig_res], LABEL[trend_res]
         out: dict[str, MarketInput] = {}
         for s in self.params.symbols:
-            c15 = self.candles.load(s, "15", 300)
-            c60 = self.candles.load(s, "60", 300)
+            sig_bars = self.bars(s, sig_res, now_s)
+            trend_bars = self.bars(s, trend_res, now_s)
             cd = self.candles.load(s, "D", 80)
             book = self.books.get(s, Book(None, None, 0))
             checks = {
-                "candle_15m_current": bool(c15) and c15[-1].open_time == boundary - 900,
-                "candle_1h_current": bool(c60)
-                and c60[-1].open_time == latest_closed_hour_open(now_ms),
+                f"candle_{sig_label}_current": bool(sig_bars)
+                and sig_bars[-1].open_time == last_closed_open(now_s, STEP[sig_res]),
+                f"candle_{trend_label}_current": bool(trend_bars)
+                and trend_bars[-1].open_time == last_closed_open(now_s, STEP[trend_res]),
                 "orderbook_fresh": is_fresh(
                     self.stream_state, f"public:orderbook-{s}", now_ms, self.bounds
                 ),
@@ -132,7 +156,7 @@ class PaperService:
             context: dict[str, Any] = {"checks": checks}
             td = trend(cd, self.params.ema_fast, self.params.ema_slow) if cd else None
             context["trend_1d_up"] = None if td is None else td.up
-            last = c15[-1].close if c15 else None
+            last = sig_bars[-1].close if sig_bars else None
             if last is not None:
                 trades = self.trades[s]
                 rolling = [(p, v) for t, p, v in trades if t >= now_ms - DAY_MS]
@@ -155,7 +179,7 @@ class PaperService:
                             "volume": prof.total_volume,
                         }
                     )
-            out[s] = MarketInput(c15, c60, book, all(checks.values()), context)
+            out[s] = MarketInput(sig_bars, trend_bars, book, all(checks.values()), context)
         return out
 
     def flatten(self, now_ms: int) -> list[tuple[str, str, str]]:
@@ -178,6 +202,8 @@ class PaperService:
             if errors:
                 alerter.post("[paper] candle fetch errors: " + "; ".join(errors)[:500])
             now_ms = int(time.time() * 1000)
+            if not is_signal_boundary(now_ms // 1000, self.params):
+                continue
             try:
                 self.engine.on_candle_close(now_ms, self.inputs(now_ms))
             except Exception as exc:
@@ -211,7 +237,9 @@ class PaperService:
                     ).run()
                 )
             rules = await self.fetch_rules(client)
-            errors = await asyncio.to_thread(self.backfill, {"15": 8, "60": 12, "D": 80})
+            errors = await asyncio.to_thread(
+                self.backfill, {"15": 8, "60": warmup_days(self.params), "D": 80}
+            )
             now_ms = int(time.time() * 1000)
             risk = RiskState(self.settings.data_path("db") / "paper.sqlite3", self.run_id)
             gate = RiskGate(risk, self.root / "HALT")

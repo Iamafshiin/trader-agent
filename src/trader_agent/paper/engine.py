@@ -26,8 +26,8 @@ SCHEMA = [
 
 @dataclass(frozen=True)
 class MarketInput:
-    c15: Sequence[Candle]
-    c60: Sequence[Candle]
+    signal_bars: Sequence[Candle]
+    trend_bars: Sequence[Candle]
     book: Book
     data_ok: bool
     context: dict[str, Any]
@@ -176,8 +176,8 @@ class PaperEngine:
             signal = evaluate(
                 self.params,
                 symbol,
-                inp.c15,
-                inp.c60,
+                inp.signal_bars,
+                inp.trend_bars,
                 self.in_position(symbol),
                 self.pullbacks[symbol],
                 inp.data_ok,
