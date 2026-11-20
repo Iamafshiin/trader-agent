@@ -1,7 +1,8 @@
 from decimal import Decimal
 
-from trader_agent.backtest.signals import hour_open, replay, to_hourly
+from trader_agent.backtest.signals import STEP, aggregate, hour_open, replay, to_hourly
 from trader_agent.market_data.candles import Candle
+from trader_agent.storage.candles import TEHRAN_UTC_OFFSET
 from trader_agent.strategy.tcp_vp import load_params
 
 D = Decimal
@@ -27,6 +28,13 @@ def test_hourly_bars_align_to_tehran_hours() -> None:
     assert all(hour_open(c.open_time) == c.open_time for _, c in hours)
     first = hours[0][1]
     assert (first.open, first.close, first.high, first.low) == (D(1000), D(1003), D(1004), D(999))
+
+
+def test_four_hour_bars_align_to_tehran_midnight() -> None:
+    hours = [c for _, c in to_hourly(uptrend(40))]
+    blocks = aggregate(hours, STEP["240"])
+    assert [(c.open_time + TEHRAN_UTC_OFFSET) % 14400 for _, c in blocks] == [0, 0, 0]
+    assert blocks[0][1].open == D(1000)
 
 
 def test_stopped_trade_loses_after_costs() -> None:

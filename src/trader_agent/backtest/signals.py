@@ -18,8 +18,8 @@ from trader_agent.strategy.tcp_vp import (
 )
 
 WINDOW = 300
-STEP_15 = 900
-STEP_60 = 3600
+STEP = {"15": 900, "60": 3600, "240": 14400}
+SLOW_OF = {"15": "60", "60": "240"}
 
 
 @dataclass(frozen=True)
@@ -38,28 +38,36 @@ class LabeledSignal:
     win: int
 
 
+def bucket_open(t: int, step: int) -> int:
+    return t - (t + TEHRAN_UTC_OFFSET) % step
+
+
 def hour_open(t: int) -> int:
-    return t - (t + TEHRAN_UTC_OFFSET) % STEP_60
+    return bucket_open(t, STEP["60"])
 
 
-def to_hourly(c15: Sequence[Candle]) -> list[tuple[int, Candle]]:
+def aggregate(bars: Sequence[Candle], step: int) -> list[tuple[int, Candle]]:
     out: list[tuple[int, Candle]] = []
     group: list[Candle] = []
-    for c in c15:
-        if group and hour_open(c.open_time) != hour_open(group[0].open_time):
-            out.append(merge(group))
+    for c in bars:
+        if group and bucket_open(c.open_time, step) != bucket_open(group[0].open_time, step):
+            out.append(merge(group, step))
             group = []
         group.append(c)
     if group:
-        out.append(merge(group))
+        out.append(merge(group, step))
     return out
 
 
-def merge(group: Sequence[Candle]) -> tuple[int, Candle]:
-    start = hour_open(group[0].open_time)
+def to_hourly(c15: Sequence[Candle]) -> list[tuple[int, Candle]]:
+    return aggregate(c15, STEP["60"])
+
+
+def merge(group: Sequence[Candle], step: int) -> tuple[int, Candle]:
+    start = bucket_open(group[0].open_time, step)
     candle = Candle(
         group[0].symbol,
-        "60",
+        str(step // 60),
         start,
         group[0].open,
         max(c.high for c in group),
@@ -67,12 +75,20 @@ def merge(group: Sequence[Candle]) -> tuple[int, Candle]:
         group[-1].close,
         sum((c.volume for c in group), Decimal(0)),
     )
-    return start + STEP_60, candle
+    return start + step, candle
 
 
-def replay(params: Params, symbol: str, c15: Sequence[Candle]) -> Iterator[LabeledSignal]:
-    hourly = to_hourly(c15)
-    h_closed = 0
+def replay(
+    params: Params,
+    symbol: str,
+    bars: Sequence[Candle],
+    resolution: str = "15",
+    slow_exit_only: bool = False,
+) -> Iterator[LabeledSignal]:
+    step = STEP[resolution]
+    slow_step = STEP[SLOW_OF[resolution]]
+    slow = aggregate(bars, slow_step)
+    s_closed = 0
     state = PullbackState()
     fee = params.taker_fee
     pending_entry: EntrySignal | None = None
@@ -91,7 +107,7 @@ def replay(params: Params, symbol: str, c15: Sequence[Candle]) -> Iterator[Label
             cost,
             sig.stop,
             sig.atr,
-            c15[i].open_time,
+            bars[i].open_time,
             proceeds,
             reason,
             i - i_in,
@@ -99,7 +115,7 @@ def replay(params: Params, symbol: str, c15: Sequence[Candle]) -> Iterator[Label
             int(ret > 0),
         )
 
-    for i, bar in enumerate(c15):
+    for i, bar in enumerate(bars):
         if pending_entry is not None:
             if pending_entry.stop < bar.open:
                 cost = bar.open * (1 + params.slippage_normal) * (1 + fee)
@@ -113,38 +129,41 @@ def replay(params: Params, symbol: str, c15: Sequence[Candle]) -> Iterator[Label
             price = min(bar.open, entry[0].stop) * (1 - params.slippage_stop)
             yield close(i, price, "protective stop")
             entry = None
-        bar_close = bar.open_time + STEP_15
-        while h_closed < len(hourly) and hourly[h_closed][0] <= bar_close:
-            h_closed += 1
-        lo = max(0, i + 1 - WINDOW)
-        w15 = c15[lo : i + 1]
-        w60 = [c for _, c in hourly[max(0, h_closed - WINDOW) : h_closed]]
+        bar_close = bar.open_time + step
+        while s_closed < len(slow) and slow[s_closed][0] <= bar_close:
+            s_closed += 1
+        w_fast = bars[max(0, i + 1 - WINDOW) : i + 1]
+        w_slow = [c for _, c in slow[max(0, s_closed - WINDOW) : s_closed]]
         data_ok = (
             i > 0
-            and c15[i - 1].open_time == bar.open_time - STEP_15
-            and bool(w60)
-            and w60[-1].open_time == hour_open(bar_close) - STEP_60
+            and bars[i - 1].open_time == bar.open_time - step
+            and bool(w_slow)
+            and w_slow[-1].open_time == bucket_open(bar_close, slow_step) - slow_step
         )
-        sig = evaluate(params, symbol, w15, w60, entry is not None, state, data_ok, Decimal(1))
+        sig = evaluate(
+            params, symbol, w_fast, w_slow, entry is not None, state, data_ok, Decimal(1)
+        )
         if isinstance(sig, EntrySignal):
             pending_entry = sig
         elif isinstance(sig, ExitSignal):
+            if slow_exit_only and not sig.reason.startswith("1h"):
+                continue
             pending_exit = sig
 
 
-def load_wallex(db: Path, market: str) -> list[Candle]:
+def load_candles(db: Path, market: str, resolution: str) -> list[Candle]:
     conn = sqlite3.connect(f"file:{db.as_posix()}?immutable=1", uri=True)
     try:
         rows = conn.execute(
             "SELECT open_time, open, high, low, close, volume FROM candles"
-            " WHERE symbol = ? AND resolution = '15' ORDER BY open_time",
-            (market,),
+            " WHERE symbol = ? AND resolution = ? ORDER BY open_time",
+            (market, resolution),
         ).fetchall()
     finally:
         conn.close()
-    symbol = market.removesuffix("TMN") + "IRT"
+    symbol = market.removesuffix("TMN") + "IRT" if market.endswith("TMN") else market
     return [
-        Candle(symbol, "15", t, *(Decimal(repr(v)) for v in (o, h, lo, c, vol)))
+        Candle(symbol, resolution, t, *(Decimal(str(v)) for v in (o, h, lo, c, vol)))
         for t, o, h, lo, c, vol in rows
     ]
 
@@ -154,15 +173,16 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--db", type=Path, required=True)
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--markets", nargs="+", default=["BTCTMN", "ETHTMN", "USDTTMN"])
+    parser.add_argument("--resolution", choices=sorted(SLOW_OF), default="15")
     args = parser.parse_args(argv)
     params = load_params()
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("w", newline="", encoding="utf-8") as f:
         writer: csv.DictWriter[str] | None = None
         for market in args.markets:
-            candles = load_wallex(args.db, market)
+            candles = load_candles(args.db, market, args.resolution)
             count = 0
-            for row in replay(params, candles[0].symbol, candles):
+            for row in replay(params, candles[0].symbol, candles, args.resolution):
                 if writer is None:
                     writer = csv.DictWriter(f, fieldnames=list(asdict(row)))
                     writer.writeheader()
